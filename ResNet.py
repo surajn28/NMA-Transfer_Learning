@@ -1,4 +1,4 @@
-
+import imp
 import os
 os.environ['KMP_DUPLICATE_LIB_OK']='True'
 import os.path as osp
@@ -8,6 +8,9 @@ import torch.nn.functional as F
 from torch.autograd import Variable
 from data_loader import HDF5Dataset
 from torch.utils.data import Dataset,DataLoader
+from torchvision import datasets,models,transforms
+
+
 class BasicBlock(nn.Module):
   """ResNet in PyTorch.
       Reference:
@@ -113,7 +116,18 @@ def ResNet34():
 def ResNet50():
   return ResNet(Bottleneck, [3, 4, 6, 3])
 
+def ResNet_pretrain():
 
+  model = models.resnet18(pretrained=True)
+  for param in model.parameters():
+    param.requires_grad = False   
+    
+  model.fc = nn.Sequential(
+                nn.Linear(512, 128),
+                nn.ReLU(inplace=True),
+                nn.Linear(128, 2))
+
+  return model
 
 if __name__ == "__main__":
 
