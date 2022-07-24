@@ -1,13 +1,13 @@
 import os
-#os.environ['KMP_DUPLICATE_LIB_OK']='True'
+# os.environ['KMP_DUPLICATE_LIB_OK']='True'
 import os.path as osp
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.autograd import Variable
-from data_loader import HDF5Dataset
+from data_loader import HDF5Dataset,RAFDataset
 from torch.utils.data import Dataset,DataLoader
-
+from tqdm import tqdm
 import gc
 import csv
 import glob
@@ -19,34 +19,38 @@ import torch.optim as optim
 import torch.nn.functional as F
 import torch.backends.cudnn as cudnn
 from torch.autograd import Variable
-
+import time
 import torchvision
 import torchvision.transforms as transforms
 
-from ResNet import ResNet,BasicBlock,Bottleneck
-def ResNet18():
-  return ResNet(BasicBlock, [2, 2, 2, 2])
+from ResNet import ResNet18, ResNet_pretrain_v1, ResNet_pretrain_v2, ResNet50_pretrain_RAF,ResNet50
 
+
+timestamp = time.strftime("%Y%m%d_%H%M%S", time.localtime()) 
 # hyper-parameters
 use_cuda = torch.cuda.is_available()
+device=torch.device('cuda:0')
 best_acc = 0  # best test accuracy
 start_epoch = 0  # start from epoch 0 or last checkpoint epoch
-batch_size = 128
+batch_size = 8
 max_epochs = 15  # Please change this to 200
 max_epochs_target = 10
 base_learning_rate = 0.1
 torchvision_transforms = True  # True/False if you want use torchvision augmentations
+outModelName = '50_FERG_scratch' + timestamp 
 
-def train(net, epoch, use_cuda=True):
+def train(net, epoch,trainloader, optimizer, criterion, use_cuda= use_cuda ):
   print('\nEpoch: %d' % epoch)
   net.train()
   train_loss = 0
   correct = 0
   total = 0
   for batch_idx, (inputs, targets) in enumerate(trainloader):
+    targets = np.array(targets, dtype=int)
+    targets = torch.as_tensor(targets, dtype=torch.long)
     if use_cuda:
-      inputs, targets = inputs.cuda(), targets.cuda()
-
+      inputs, targets = inputs.cuda(device=device), targets.cuda(device=device)
+    
     optimizer.zero_grad()
     inputs, targets = Variable(inputs), Variable(targets)
     outputs = net(inputs)
@@ -59,18 +63,21 @@ def train(net, epoch, use_cuda=True):
     total += targets.size(0)
     correct += predicted.eq(targets.data).cpu().sum()
 
-    if batch_idx % 500 == 0:
-      print(batch_idx, len(trainloader), 'Loss: %.3f | Acc: %.3f%% (%d/%d)'
-          % (train_loss/(batch_idx+1), 100.*correct/total, correct, total))
+    # if batch_idx % 500 == 0:
+    print(batch_idx, len(trainloader), 'Loss: %.3f | Acc: %.3f%% (%d/%d)'
+        % (train_loss/(batch_idx+1), 100.*correct/total, correct, total))
+
   return (train_loss/batch_idx, 100.*correct/total)
 
 
-def test(net, epoch, outModelName, use_cuda=True):
+def test(net, epoch,testloader, outModelName, criterion, use_cuda=True):
   global best_acc
   net.eval()
   test_loss, correct, total = 0, 0, 0
   with torch.no_grad():
     for batch_idx, (inputs, targets) in enumerate(testloader):
+      targets = np.array(targets, dtype=int)
+      targets = torch.as_tensor(targets, dtype=torch.long)
       if use_cuda:
         inputs, targets = inputs.cuda(), targets.cuda()
 
@@ -122,28 +129,41 @@ def adjust_learning_rate(optimizer, epoch):
 
 if __name__=="__main__":
 
-    path = '/Users/gaojun/Documents/p1/NMA/FERG_DB_256'
-    trainset = HDF5Dataset(osp.join(path,'train.h5'))
-    testset = HDF5Dataset(osp.join(path,'test.h5'))
+    
+    imagenet_compoes = transforms.Compose([
+      transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+    ])
 
-    trainloader = DataLoader(trainset, batch_size=12, shuffle=True)
-    testloader = DataLoader(testset, batch_size=12, shuffle=True)
+    path = '/home/gaojud96/DL_model/Transfer_Learning/dataset'
+    trainset = HDF5Dataset(osp.join(path,'FERG_train.h5'),transform=imagenet_compoes)
+    testset = HDF5Dataset(osp.join(path,'FERG_test.h5'),transform=imagenet_compoes)
+    trainloader = DataLoader(trainset, batch_size=batch_size, shuffle=True)
+    testloader = DataLoader(testset, batch_size=batch_size, shuffle=True)
 
-    net = ResNet18()
+    # imgdir = '/home/gaojud96/DL_model/Transfer_Learning/dataset/RAF-DB/basic/Image/aligned_224'
+    # train_labeldir = '/home/gaojud96/DL_model/Transfer_Learning/dataset/RAF-DB/train.csv'
+    # test_labeldir = '/home/gaojud96/DL_model/Transfer_Learning/dataset/RAF-DB/test.csv'
+    # trainset = RAFDataset(imgdir,train_labeldir,transform=imagenet_compoes)
+    # trainloader = DataLoader(trainset, batch_size=batch_size, shuffle=True)
+    # testset = RAFDataset(imgdir,train_labeldir,transform=imagenet_compoes)
+    # testloader = DataLoader(testset, batch_size=batch_size, shuffle=True)
+
+    net = ResNet50()
     net = net.double()
-
+    if use_cuda:
+      net.cuda()
 
     result_folder = './results/'
     if not os.path.exists(result_folder):
         os.makedirs(result_folder)
 
-    logname = result_folder + net.__class__.__name__ + '_pretrain' + '.csv'
+    logname = result_folder + net.__class__.__name__ + outModelName + '.csv'
 
     # Optimizer and criterion
     criterion = nn.CrossEntropyLoss()
     optimizer = optim.SGD(net.parameters(), lr=base_learning_rate, momentum=0.9, weight_decay=1e-4)
+    # optimizer = optim.Adam(net.parameters(),lr=base_learning_rate, weight_decay=1e-4)
 
-    outModelName = 'pretrain'
     if not os.path.exists(logname):
         with open(logname, 'w') as logfile:
             logwriter = csv.writer(logfile, delimiter=',')
@@ -151,9 +171,11 @@ if __name__=="__main__":
 
     for epoch in range(start_epoch, max_epochs):
         adjust_learning_rate(optimizer, epoch)
-        train_loss, train_acc = train(net, epoch, use_cuda=use_cuda)
-        test_loss, test_acc = test(net, epoch, outModelName, use_cuda=use_cuda)
+        train_loss, train_acc = train(net, epoch, trainloader, optimizer,criterion,use_cuda=use_cuda)
+        test_loss, test_acc = test(net, epoch, testloader, outModelName, criterion, use_cuda=use_cuda)
         with open(logname, 'a') as logfile:
             logwriter = csv.writer(logfile, delimiter=',')
             logwriter.writerow([epoch, train_loss, train_acc.item(), test_loss, test_acc.item()])
         print(f'Epoch: {epoch} | train acc: {train_acc} | test acc: {test_acc}')
+
+
