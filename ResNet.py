@@ -116,9 +116,9 @@ def ResNet34():
 def ResNet50():
   return ResNet(Bottleneck, [3, 4, 6, 3])
 
-def ResNet_pretrain():
+def ResNet_pretrain_v1():
 
-  model = models.resnet18(pretrained=True)
+  model = models.resnet18(weights=ResNet18_Weights)
   for param in model.parameters():
     param.requires_grad = False   
     
@@ -129,14 +129,40 @@ def ResNet_pretrain():
 
   return model
 
+def ResNet_pretrain_v2():
+
+  model = models.resnet50(pretrained=True)
+
+  model.fc = nn.Sequential(
+                nn.Linear(2048, 512),
+                nn.ReLU(inplace=True),
+                nn.Linear(512, 2))
+
+  return model
+
+def ResNet50_pretrain_RAF():
+  model = models.resnet50(pretrained=True)
+
+  model.fc = nn.Sequential(
+    nn.Linear(2048,1024),
+    nn.ReLU(inplace=True),
+    nn.Linear(1024,512),
+    nn.ReLU(inplace=True),
+    nn.Linear(512,128),
+    nn.ReLU(inplace=True),
+    nn.Linear(128, 7))
+  
+  return model
+
+
 if __name__ == "__main__":
 
-    path = '/Users/gaojun/Documents/p1/NMA/FERG_DB_256'
-    trainset = HDF5Dataset(osp.join(path,'train.h5'))
-    testset = HDF5Dataset(osp.join(path,'test.h5'))
+    # path = '/Users/gaojun/Documents/p1/NMA/FERG_DB_256'
+    # trainset = HDF5Dataset(osp.join(path,'train.h5'))
+    # testset = HDF5Dataset(osp.join(path,'test.h5'))
+    # trainloader = DataLoader(trainset, batch_size=12, shuffle=True)
+    # testloader = DataLoader(testset, batch_size=12, shuffle=True)
 
-    trainloader = DataLoader(trainset, batch_size=12, shuffle=True)
-    testloader = DataLoader(testset, batch_size=12, shuffle=True)
 
     net = ResNet18()
     net = net.double()
@@ -144,5 +170,4 @@ if __name__ == "__main__":
 
     y = net(t)
     print(y)
-
 
